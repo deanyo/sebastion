@@ -4,7 +4,7 @@ local ADDON, ns = ...
 ns = ns or {}
 
 ns.ADDON = ADDON or "Duel"
-ns.VERSION = "1.0.0"
+ns.VERSION = "1.1.0"
 -- Wire protocol. Bump on any incompatible message change; peers on another
 -- protocol are ignored for sync and can only duel casually.
 ns.PROTO = 2   -- 2: level brackets

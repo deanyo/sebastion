@@ -2,7 +2,7 @@
 ## Title: |cffe6b422Duel|r Ladder
 ## Notes: Chess-style Elo ranked duels for WoW Forever: ranked/casual agreement, verified results, shared peer-to-peer leaderboard.
 ## Author: deanyo
-## Version: 1.0.0
+## Version: 1.1.0
 ## SavedVariables: DuelDB
 ## IconTexture: Interface\Icons\Ability_DualWield
 ## X-Category: PvP
