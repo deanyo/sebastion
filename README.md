@@ -30,7 +30,8 @@ python tests/integration.py  # two full addon instances against a stubbed WoW AP
 
 1. Install on both clients. Two accounts on one Battle.net license work: `WoW1` and `WoW2` in the
    launcher.
-2. Log a **level 60** character in on each, same faction, near each other. Type `/ladder selftest` on
+2. Log in a character on each, same faction, near each other, in the same level bracket and at most
+   2 levels apart (or run `/ladder testmode` on both to skip level rules for that session). Type `/ladder selftest` on
    both. It should report all checks passed.
 3. Run `/ladder probe` once and note whether "statistics usable" is true. That decides whether the
    ★ server-evidence badge can ever appear.

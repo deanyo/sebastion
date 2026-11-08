@@ -24,7 +24,7 @@ test("validate rejects bad input", function()
     ok(not Ledger.Validate(raw({ a = "Bob Marsh" })), "same names")
     ok(not Ledger.Validate(raw({ la = 59 })), "level gap")
     ok(not Ledger.Validate(raw({ la = 5, lb = 5 })), "min level")
-    ok(not Ledger.Validate(raw({ la = 59, lb = 59 })), "ranked is max level only")
+    ok(not Ledger.Validate(raw({ la = 9, lb = 9 })), "below level 10")
     ok(not Ledger.Validate(raw({ ts = ns.SEASON_START - 1 })), "pre-season")
     ok(not Ledger.Validate(raw({ ts = T0 + 1000 }), T0), "future")
     ok(not Ledger.Validate(raw({ w = "x" })), "winner")
@@ -123,7 +123,7 @@ test("derive replays verified matches deterministically", function()
     local led = Ledger.New({})
     verified(led, 1, "a", T0)
     verified(led, 2, "b", T0 + 90000)
-    local players, deltas = led:Derive()
+    local players, deltas = led:DeriveBracket(60)
     local a, b = players["Alice Stone"], players["Bob Marsh"]
     eq(a.w, 1); eq(a.l, 1); eq(b.w, 1)
     eq(a.r, 1498)  -- 1520 vs 1480, then loses: round(40 * (0 - 0.5575)) = -22
@@ -132,7 +132,7 @@ end)
 test("derive: exact numbers", function()
     local led = Ledger.New({})
     verified(led, 1, "a", T0)
-    local players, deltas = led:Derive()
+    local players, deltas = led:DeriveBracket(60)
     eq(players["Alice Stone"].r, 1520); eq(players["Bob Marsh"].r, 1480)
     eq(players["Alice Stone"].peak, 1520); eq(players["Bob Marsh"].peak, 1500)
     local d = deltas[Util.Id("m1")]
@@ -146,7 +146,7 @@ test("derive is independent of insertion order", function()
             verified(led, i, (i % 2 == 0) and "a" or "b", T0 + i * 100000,
                 (i % 3 == 0) and "Carl Third" or "Alice Stone", "Bob Marsh")
         end
-        local p = led:Derive()
+        local p = led:DeriveBracket(60)
         local out = {}
         for name, pl in pairs(p) do out[name] = pl.r end
         return out
@@ -155,7 +155,7 @@ test("derive is independent of insertion order", function()
 end)
 
 local function weights(led, n, prefix)
-    local _, deltas = led:Derive()
+    local _, deltas = led:DeriveBracket(60)
     local out = {}
     for i = 1, n do out[i] = deltas[Util.Id((prefix or "m") .. i)].weight end
     return out
@@ -180,7 +180,7 @@ test("lopsided pair stops counting (win trading)", function()
     for i = 1, 9 do verified(led, i, "a", T0 + i * 2 * 86400) end
     local w = weights(led, 9)
     eq(w[6], 1); eq(w[7], 0); eq(w[9], 0)
-    local p = led:Derive()
+    local p = led:DeriveBracket(60)
     eq(p["Alice Stone"].counted, 6)
 end)
 
@@ -188,7 +188,7 @@ test("fled results count half", function()
     local led = Ledger.New({})
     local r = raw({ id = Util.Id("f1"), how = "F" })
     attest(led, r, "Carl Third", true, true, "Dora Fourth")
-    local p, d = led:Derive()
+    local p, d = led:DeriveBracket(60)
     eq(d[Util.Id("f1")].weight, 0.5)
     eq(p["Alice Stone"].r, 1510)
 end)
@@ -197,10 +197,10 @@ test("established player farming a provisional alt gains half", function()
     local led = Ledger.New({})
     -- Alice gets established against 10 different opponents.
     for i = 1, 10 do verified(led, i, "a", T0 + i * 100, "Alice Stone", "Opp" .. string.char(96 + i) .. " Foe") end
-    local before = led:Derive()["Alice Stone"]
+    local before = led:DeriveBracket(60)["Alice Stone"]
     eq(before.counted, 10)
     verified(led, 99, "a", T0 + 5000, "Alice Stone", "Zed Freshalt")
-    local p, d = led:Derive()
+    local p, d = led:DeriveBracket(60)
     local full = ns.Elo.Delta(before.r, 10, 1500, 1)
     eq(d[Util.Id("m99")].da, Util.Round(full * 0.5))
 end)
@@ -208,11 +208,11 @@ end)
 test("ranked listing needs 5 distinct opponents and 10 games", function()
     local led = Ledger.New({})
     for i = 1, 10 do verified(led, i, "a", T0 + i * 86400 * 3) end
-    local p = led:Derive()
+    local p = led:DeriveBracket(60)
     ok(not Ledger.IsRanked(p["Alice Stone"]))
     local led2 = Ledger.New({})
     for i = 1, 10 do verified(led2, i, "a", T0 + i * 100, "Alice Stone", "Opp" .. string.char(96 + (i % 5) + 1) .. " Foe") end
-    ok(Ledger.IsRanked(led2:Derive()["Alice Stone"]))
+    ok(Ledger.IsRanked(led2:DeriveBracket(60)["Alice Stone"]))
 end)
 
 test("disputed and pending matches do not move ratings", function()
@@ -220,6 +220,35 @@ test("disputed and pending matches do not move ratings", function()
     verified(led, 1, "a", T0)
     led:Deny(Util.Id("m1"), "Bob Marsh")
     attest(led, raw({ id = Util.Id("p1") }), nil, false, false, "Alice Stone")
-    local players = led:Derive()
+    local players = led:DeriveBracket(60)
     eq(players["Alice Stone"], nil)
+end)
+
+
+test("brackets: same bracket and within 2 levels", function()
+    ok(Ledger.Validate(raw({ la = 25, lb = 27 })), "25 vs 27")
+    ok(not Ledger.Validate(raw({ la = 25, lb = 28 })), "gap 3")
+    ok(not Ledger.Validate(raw({ la = 29, lb = 30 })), "across brackets")
+    ok(not Ledger.Validate(raw({ la = 59, lb = 60 })), "59 vs the cap")
+    ok(Ledger.Validate(raw({ la = 59, lb = 58 })), "50s bracket")
+    eq(Ledger.Bracket(10), 10); eq(Ledger.Bracket(19), 10); eq(Ledger.Bracket(59), 50); eq(Ledger.Bracket(60), 60)
+    eq(Ledger.Bracket(9), nil)
+end)
+
+test("brackets are independent ladders", function()
+    local led = Ledger.New({})
+    attest(led, raw({ id = Util.Id("lo"), la = 25, lb = 25 }), "Carl Third", true, true, "Dora Fourth")
+    attest(led, raw({ id = Util.Id("hi"), w = "b", ts = T0 + 10 }), "Carl Third", true, true, "Dora Fourth")
+    local all = led:Derive()
+    eq(all[20]["Alice Stone"].r, 1520)
+    eq(all[60]["Alice Stone"].r, 1480)
+    eq(all[60]["Bob Marsh"].r, 1520)
+end)
+
+test("test mode lifts level rules for the session only", function()
+    ns.RULES.TEST = true
+    local v = Ledger.Validate(raw({ la = 3, lb = 40 }))
+    ns.RULES.TEST = nil
+    ok(v, "accepted in test mode")
+    ok(not Ledger.Validate(raw({ la = 3, lb = 40 })), "rejected again after")
 end)

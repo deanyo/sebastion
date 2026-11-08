@@ -52,8 +52,11 @@ function Ledger.Validate(f, now)
     if now and ts > now + RULES.MAX_FUTURE_SKEW then return nil, "future" end
     local la, lb = Util.Int(f.la, 1, 200), Util.Int(f.lb, 1, 200)
     if not la or not lb then return nil, "level" end
-    if la < RULES.MIN_LEVEL or lb < RULES.MIN_LEVEL then return nil, "minlevel" end
-    if math.abs(la - lb) > RULES.MAX_LEVEL_GAP then return nil, "levelgap" end
+    if not RULES.TEST then
+        if la < RULES.MIN_LEVEL or lb < RULES.MIN_LEVEL then return nil, "minlevel" end
+        if math.abs(la - lb) > RULES.MAX_LEVEL_GAP then return nil, "levelgap" end
+        if Ledger.Bracket(la) ~= Ledger.Bracket(lb) then return nil, "bracket" end
+    end
     local ca, cb = Util.ClassToken(f.ca), Util.ClassToken(f.cb)
     -- Sorted participants; flip side-dependent fields if needed.
     if a > b then
@@ -61,6 +64,20 @@ function Ledger.Validate(f, now)
         w = other(w)
     end
     return { id = id, ts = ts, a = a, b = b, w = w, how = how, la = la, lb = lb, ca = ca, cb = cb }
+end
+
+-- Ladder bracket of a level: 10, 20, 30, 40, 50 or 60 (the cap). nil below MIN_LEVEL.
+function Ledger.Bracket(level)
+    level = tonumber(level)
+    if not level then return nil end
+    if level >= RULES.MAX_LEVEL then return RULES.MAX_LEVEL end
+    if level < RULES.MIN_LEVEL then return RULES.TEST and RULES.MIN_LEVEL or nil end
+    return math.floor(level / RULES.BRACKET_SIZE) * RULES.BRACKET_SIZE
+end
+
+-- Bracket a match counts in (both players share it; test mode uses the lower level).
+function Ledger.MatchBracket(r)
+    return Ledger.Bracket(math.min(r.la, r.lb)) or RULES.MIN_LEVEL
 end
 
 -- Wire format: M~id~ts36~a~b~w~how~la~lb~ca~cb~fa~fb
@@ -261,8 +278,8 @@ function Ledger.PairWeight(history, ts)
     return w, w == 0 and "day" or nil
 end
 
-local function newPlayer(name)
-    return { name = name, r = Elo.START, g = 0, counted = 0, w = 0, l = 0, peak = Elo.START,
+local function newPlayer(name, bracket)
+    return { name = name, bracket = bracket, r = Elo.START, g = 0, counted = 0, w = 0, l = 0, peak = Elo.START,
         hist = {}, direct = 0, last = 0, opponents = {}, nOpp = 0 }
 end
 
@@ -270,14 +287,18 @@ function Ledger.IsRanked(p)
     return p.nOpp >= RULES.MIN_OPPONENTS and p.counted >= Elo.PROVISIONAL_GAMES
 end
 
--- Replay every verified match. Returns players[name] and deltas[id].
--- players[name] = { r, g, counted, w, l, peak, class, level, last, hist = {{ts, r, d, id}}, direct }
+-- Replay every verified match. Returns byBracket[bracket][name] and deltas[id].
+-- player = { r, g, counted, w, l, peak, class, level, last, hist = {{ts, r, d, id}}, direct }
+-- Each bracket is an independent ladder with its own ratings.
 function Ledger:Derive()
-    local players, deltas, pairs_ = {}, {}, {}
+    local byBracket, deltas, pairs_ = {}, {}, {}
     for _, r in ipairs(self:Verified()) do
-        local pa = players[r.a] or newPlayer(r.a); players[r.a] = pa
-        local pb = players[r.b] or newPlayer(r.b); players[r.b] = pb
-        local key = r.a .. "|" .. r.b
+        local br = Ledger.MatchBracket(r)
+        local players = byBracket[br]
+        if not players then players = {}; byBracket[br] = players end
+        local pa = players[r.a] or newPlayer(r.a, br); players[r.a] = pa
+        local pb = players[r.b] or newPlayer(r.b, br); players[r.b] = pb
+        local key = br .. "|" .. r.a .. "|" .. r.b
         local ph = pairs_[key] or {}; pairs_[key] = ph
         local weight, why = Ledger.PairWeight(ph, r.ts)
         if r.how == "F" then weight = weight * RULES.FLED_WEIGHT end
@@ -291,7 +312,7 @@ function Ledger:Derive()
         if db > 0 and pb.counted >= Elo.PROVISIONAL_GAMES and pa.counted < Elo.PROVISIONAL_GAMES then
             db = Util.Round(db * RULES.PROVISIONAL_FARM)
         end
-        deltas[r.id] = { ra = pa.r, rb = pb.r, da = da, db = db, weight = weight, why = why }
+        deltas[r.id] = { ra = pa.r, rb = pb.r, da = da, db = db, weight = weight, why = why, bracket = br }
         pa.r, pb.r = pa.r + da, pb.r + db
         if weight > 0 then
             ph[#ph + 1] = { r.ts, r.w == "a" and r.a or r.b }
@@ -312,7 +333,13 @@ function Ledger:Derive()
         pb.hist[#pb.hist + 1] = { r.ts, pb.r, db, r.id }
     end
     self.dirty = false
-    return players, deltas
+    return byBracket, deltas
+end
+
+-- One bracket's players (tests and tools).
+function Ledger:DeriveBracket(br)
+    local all, deltas = self:Derive()
+    return all[br] or {}, deltas
 end
 
 -- Drop the oldest pending/disputed records when over capacity.

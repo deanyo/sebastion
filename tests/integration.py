@@ -284,6 +284,22 @@ def _():
     assert deltas == [1, 0.5, 0.25, 0, 0], deltas
 
 
+@test("level 25s play ranked in the 20s bracket; 25 vs 31 is casual")
+def _():
+    w = World()
+    a = w.add("Sparkling Water", "MAGE", 25)
+    b = w.add("Bob Marsh", "ROGUE", 26)
+    duel(w, a, b, winner=a)
+    _, mode, mid, _ = last_entry(a)
+    assert mode == "R" and status_of(b, mid) == "verified", mode
+    br = a.lua.eval("function(ns) local p = ns.byBracket[20]; return p and p['Sparkling Water'] and p['Sparkling Water'].r end")(a.ns)
+    assert br == 1520, br
+    c = w.add("Carl Third", "PRIEST", 31)
+    duel(w, a, c, winner=a)
+    _, mode, _, _ = last_entry(a)
+    assert mode == "C", mode
+
+
 if __name__ == "__main__":
     for f in failed:
         print("FAIL", f)

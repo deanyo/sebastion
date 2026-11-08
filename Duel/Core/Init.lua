@@ -7,7 +7,7 @@ ns.ADDON = ADDON or "Duel"
 ns.VERSION = "1.0.0"
 -- Wire protocol. Bump on any incompatible message change; peers on another
 -- protocol are ignored for sync and can only duel casually.
-ns.PROTO = 1
+ns.PROTO = 2   -- 2: level brackets
 ns.PREFIX = "DuelLadder"          -- addon message prefix (max 16 bytes)
 ns.SEASON = 1
 ns.SEASON_START = 1793750400       -- 2026-11-04 00:00 UTC, WoW Forever launch
@@ -15,9 +15,13 @@ ns.SEASON_START = 1793750400       -- 2026-11-04 00:00 UTC, WoW Forever launch
 -- Competitive rules. These are part of the deterministic rating replay:
 -- every client must use the same values, so they only change with PROTO.
 ns.RULES = {
-    -- Ranked is max level only: a feeder alt costs a full levelling grind.
-    MIN_LEVEL = 60,                -- ranked needs both players at this level or above
-    MAX_LEVEL_GAP = 0,             -- and at most this many levels apart
+    -- Level brackets: separate ladders for 10-19, 20-29 ... 50-59 and 60.
+    -- Ranked needs both players in the same bracket and close in level, so an alt
+    -- can only ever touch the ladder of its own bracket.
+    MIN_LEVEL = 10,                -- no ranked below this level
+    MAX_LEVEL = 60,                -- level cap: its own bracket
+    BRACKET_SIZE = 10,
+    MAX_LEVEL_GAP = 2,             -- at most this many levels apart
     -- Anti win-trading. A pair = the same two characters.
     PAIR_WINDOW = 86400,           -- repeat-opponent window (24 h)
     PAIR_WEIGHTS = { 1, 0.5, 0.25 },  -- 1st, 2nd, 3rd counted game vs same player in 24 h; then 0

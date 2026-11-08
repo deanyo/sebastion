@@ -60,8 +60,8 @@ UI/     Theme, Main window, Prompt, Result banner, Minimap button
    challenger). B sees `DUEL_REQUESTED`.
 2. Both whisper `HELLO` (protocol, version, nonce, level, class). If the other side has no addon,
    nothing comes back and the duel stays casual.
-3. Each side clicks Ranked or Casual, or a saved preference answers. Eligibility: both level 60,
-   not your own alt, same protocol.
+3. Each side clicks Ranked or Casual, or a saved preference answers. Eligibility: same level
+   bracket (10-19, 20-29 ... 50-59, 60), at most 2 levels apart, not your own alt, same protocol.
 4. B (the challenged side) **locks** the mode when the countdown starts. It is ranked only if both
    consented. B sends `LOCK`, and A adopts it. If `LOCK` is lost, A stays casual.
 5. The winner line arrives. Each side builds the same record. The match id is the hash of both names
@@ -72,6 +72,9 @@ UI/     Theme, Main window, Prompt, Result banner, Minimap button
    Battle.net friends.
 
 ## 4. Rating
+
+Every level bracket (10-19, 20-29, 30-39, 40-49, 50-59, 60) is an independent ladder with its own
+ratings, history and leaderboard. A match counts in the bracket both players share.
 
 Elo, start 1500. K is 40 for the first 10 counted games, 24 after that, 16 at 2000+. Deltas are
 integers. Ratings are **never read from the network**: each client replays verified records in
@@ -93,7 +96,7 @@ Diamond 1850, Grandmaster 2000. The leaderboard lists ranked players: 10+ counte
 | Duplicate / replayed results | Deterministic match ids, idempotent merge | strong |
 | Forged rating values | Ratings are derived, never transmitted | strong |
 | Win trading with a mate | 24 h weights 100/50/25/0 %, 6 counted per pair per week, lopsided-pair freeze (6+ games in 30 d, ≥85 % one way), fled = 50 % | limits gains, cannot stop it |
-| Low-level / fresh alts | Ranked at level 60 only. Established vs provisional = half gains. Own characters excluded | good |
+| Low-level / fresh alts | Separate ladder per level bracket (an alt only affects its own bracket), ±2 levels, no ranked below 10. Established vs provisional = half gains. Own characters excluded | good |
 | Relayed forgeries (modified client invents matches) | Per-source cap on unverified records. Participants are asked directly (`CQ`). A participant online at the claimed time denies it. "Unvouched" markers and an optional filter | partial |
 | Conflicting versions | A participant's differing version disputes the match. A third party's is ignored | good |
 | Corrupted SavedVariables | Every record and entry validated on load, invalid ones dropped and counted | good |

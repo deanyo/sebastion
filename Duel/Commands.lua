@@ -14,6 +14,7 @@ local HELP = {
     "|cffe6b422/duel status|r - network status   |cffe6b422/duel sync|r - announce and sync now",
     "|cffe6b422/duel probe|r - what this client supports   |cffe6b422/duel selftest|r - run the rating/protocol checks",
     "|cffe6b422/duel test win|lose|prompt|r - preview screens   |cffe6b422/duel pairs|r - most lopsided ranked pairs",
+    "|cffe6b422/ladder testmode|r - this session only: ranked between any levels (results vanish on /reload)",
     "|cffe6b422/duel debug|r - toggle debug output   |cffe6b422/duel minimap|r - toggle the minimap button",
 }
 
@@ -105,7 +106,7 @@ local function selftest()
         led:Ingest(copy, "Test Beta", "Test Alpha", ns.ServerNow())
         check("verified after both", Ledger.Status(led:Get(rec.id)) == "verified")
         local players = led:Derive()
-        check("winner +20", players["Test Alpha"] and players["Test Alpha"].r == 1520)
+        check("winner +20", players[60] and players[60]["Test Alpha"] and players[60]["Test Alpha"].r == 1520)
     end
     if #fail == 0 then ns.Print("Self-test: |cff4ce65aall %d checks passed|r.", okCount)
     else ns.Print("Self-test: |cfff24d47%d failed|r: %s", #fail, table.concat(fail, ", ")) end
@@ -165,6 +166,19 @@ local SUB = {
     minimap = function()
         ns.db.settings.minimap = not ns.db.settings.minimap
         ns.Minimap.Update()
+    end,
+    testmode = function()
+        -- Session-only: lift the level rule so two low-level characters can test ranked.
+        -- Matches recorded now break the real rules, so DB.Load drops them at the next
+        -- login/reload, and every other client rejects them: the real ladder never sees them.
+        local R = ns.RULES
+        if not R.TEST then
+            R.TEST = true
+            ns.Toast.Show("TEST MODE ON", "Any two levels can duel ranked. Test results vanish at your next /reload. Both players need test mode.", "warn")
+        else
+            R.TEST = nil
+            ns.Toast.Show("Test mode off", "Normal bracket rules again.", "info")
+        end
     end,
     test = function(rest)
         if rest == "lose" then ns.Result.Demo(false)

@@ -6,7 +6,7 @@ local Util, Ledger, Elo, DB = ns.Util, ns.Ledger, ns.Elo, ns.DB
 local C = {}
 ns.Controller = C
 ns.me = ns.me or {}
-ns.players, ns.deltas, ns.board = {}, {}, {}
+ns.players, ns.deltas, ns.byBracket, ns.boards = {}, {}, {}, {}
 
 ---------------------------------------------------------------------------
 -- Output and listeners
@@ -89,10 +89,7 @@ end
 -- Ledger -> leaderboard
 ---------------------------------------------------------------------------
 local derivePending = false
-local function derive()
-    derivePending = false
-    local players, deltas = ns.ledger:Derive()
-    ns.players, ns.deltas = players, deltas
+local function sortBoard(players)
     local board = {}
     for _, p in pairs(players) do board[#board + 1] = p end
     table.sort(board, function(x, y)
@@ -102,8 +99,32 @@ local function derive()
         return x.name < y.name
     end)
     for i, p in ipairs(board) do p.rank = Ledger.IsRanked(p) and i or nil end
-    ns.board = board
+    return board
+end
+
+local function derive()
+    derivePending = false
+    local byBracket, deltas = ns.ledger:Derive()
+    ns.byBracket, ns.deltas = byBracket, deltas
+    ns.boards = {}
+    for br, players in pairs(byBracket) do ns.boards[br] = sortBoard(players) end
+    ns.players = byBracket[ns.MyBracket()] or {}
     ns.Fire("LEDGER")
+end
+
+-- The ladder bracket of our current level (10, 20 ... 60).
+function ns.MyBracket()
+    return Ledger.Bracket(ns.me.level or UnitLevel("player")) or ns.RULES.MIN_LEVEL
+end
+
+-- The bracket a player has played most in (for profiles), or ours.
+function ns.MainBracket(name)
+    local best, games = nil, -1
+    for br, players in pairs(ns.byBracket) do
+        local p = players[name]
+        if p and p.g > games then best, games = br, p.g end
+    end
+    return best or ns.MyBracket()
 end
 
 function ns.OnLedgerChanged(now)
@@ -113,10 +134,14 @@ function ns.OnLedgerChanged(now)
     C_Timer.After(0.5, derive)
 end
 
-function ns.Me()
-    return ns.players[ns.me.name] or { name = ns.me.name, r = Elo.START, g = 0, counted = 0, w = 0, l = 0,
-        peak = Elo.START, hist = {}, nOpp = 0, class = ns.me.class }
+function ns.Player(br, name)
+    local players = ns.byBracket[br]
+    return players and players[name] or { name = name, bracket = br, r = Elo.START, g = 0, counted = 0,
+        w = 0, l = 0, peak = Elo.START, hist = {}, nOpp = 0, last = 0, direct = 0,
+        class = name == ns.me.name and ns.me.class or nil }
 end
+
+function ns.Me(br) return ns.Player(br or ns.MyBracket(), ns.me.name) end
 
 -- Rating change this match would cause once verified (both sides).
 function ns.Project(id)
@@ -134,9 +159,9 @@ end
 function ns.PairWeightNow(opp)
     local a, b = ns.me.name, opp
     if a > b then a, b = b, a end
-    local hist = {}
+    local hist, br = {}, ns.MyBracket()
     for _, r in ipairs(ns.ledger:Verified()) do
-        if r.a == a and r.b == b then
+        if r.a == a and r.b == b and Ledger.MatchBracket(r) == br then
             local d = ns.deltas[r.id]
             if d and d.weight > 0 then hist[#hist + 1] = { r.ts, r.w == "a" and r.a or r.b } end
         end
@@ -175,16 +200,21 @@ local function eligible(opp, peer)
     local R = ns.RULES
     local mine = myLevel()
     if not mine or not peer.level then return false, "level" end
-    if mine < R.MIN_LEVEL then return false, "my_level" end
-    if peer.level < R.MIN_LEVEL then return false, "their_level" end
-    if math.abs(mine - peer.level) > R.MAX_LEVEL_GAP then return false, "level_gap" end
+    if not R.TEST then
+        if mine < R.MIN_LEVEL then return false, "my_level" end
+        if peer.level < R.MIN_LEVEL then return false, "their_level" end
+        if Ledger.Bracket(mine) ~= Ledger.Bracket(peer.level) then return false, "bracket" end
+        if math.abs(mine - peer.level) > R.MAX_LEVEL_GAP then return false, "level_gap" end
+    end
     if ns.db.chars[opp] then return false, "own_alt" end
     return true
 end
 
 C.REASONS = {
-    level = "level unknown", my_level = "you must be level " .. ns.RULES.MIN_LEVEL,
-    their_level = "opponent must be level " .. ns.RULES.MIN_LEVEL, level_gap = "level difference",
+    level = "level unknown", my_level = "ranked starts at level " .. ns.RULES.MIN_LEVEL,
+    their_level = "ranked starts at level " .. ns.RULES.MIN_LEVEL,
+    bracket = "different level brackets (10-19, 20-29 ... 60)",
+    level_gap = "more than " .. ns.RULES.MAX_LEVEL_GAP .. " levels apart",
     own_alt = "that is one of your own characters", they_newer = "opponent runs a newer Duel",
     they_older = "opponent runs an older Duel",
 }
@@ -239,7 +269,7 @@ local function onResult(res)
         if rec then
             local side = Ledger.SideOf(rec, me)
             rec.claim = { a = side == "a", b = side == "b" }
-            local before = ns.Me().r
+            local before = ns.Me(Ledger.MatchBracket(rec)).r
             ns.ledger:Ingest(rec, nil, me, serverNow())
             local stored = ns.ledger:Get(rec.id)
             ns.Network.SendTo(res.opp, Ledger.Encode(stored), true)
@@ -311,9 +341,10 @@ local function onIngest(result, rec, sender)
                 for _, e in ipairs(ns.db.history[ns.me.name] or {}) do
                     if e.match == r.id then e.delta = delta end
                 end
+                local now = ns.Me(Ledger.MatchBracket(r)).r
                 ns.Notify("Ranked result vs %s confirmed. Rating %d (%s%d).", mine == "a" and r.b or r.a,
-                    ns.Me().r, delta >= 0 and "+" or "", delta)
-                ns.Toast_("Ranked result confirmed", string.format("Rating %d (%s%d) vs %s", ns.Me().r,
+                    now, delta >= 0 and "+" or "", delta)
+                ns.Toast_("Ranked result confirmed", string.format("Rating %d (%s%d) vs %s", now,
                     delta >= 0 and "+" or "", delta, mine == "a" and r.b or r.a), "success")
             end
         end)
@@ -427,7 +458,7 @@ function events.PLAYER_LOGIN()
     ns.Fire("READY")
     C_Timer.After(6, function()
         local p = ns.Me()
-        ns.Toast_("Duel Ladder ready", string.format("Rating %d  ·  type /ladder to open", p.r), "info")
+        ns.Toast_("Duel Ladder ready", string.format("%ds bracket rating %d  ·  type /ladder to open", ns.MyBracket(), p.r), "info")
     end)
 end
 
@@ -435,6 +466,10 @@ function events.PLAYER_LEVEL_UP(level)
     if readable(level) then
         ns.me.level = level
         if ns.db.chars[ns.me.name] then ns.db.chars[ns.me.name].level = level end
+        ns.players = ns.byBracket[ns.MyBracket()] or {}
+        if level % ns.RULES.BRACKET_SIZE == 0 and Ledger.Bracket(level) then
+            ns.Toast_("New ladder bracket", "You are now in the " .. Ledger.Bracket(level) .. "s bracket: a fresh rating starts at 1500.", "info")
+        end
     end
 end
 

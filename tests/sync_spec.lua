@@ -47,7 +47,7 @@ end
 
 local function ratings(node)
     local out = {}
-    for name, p in pairs(node.ledger:Derive()) do out[name] = p.r end
+    for name, p in pairs(node.ledger:DeriveBracket(60)) do out[name] = p.r end
     return out
 end
 

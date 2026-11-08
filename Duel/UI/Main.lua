@@ -91,6 +91,52 @@ local function makeList(parent, rowCount, rowHeight, build, fill)
 end
 
 ---------------------------------------------------------------------------
+-- Bracket selector (10-19 ... 60): each bracket is its own ladder.
+---------------------------------------------------------------------------
+local BRACKETS = { 10, 20, 30, 40, 50, 60 }
+
+local function bracketLabel(br)
+    if br >= ns.RULES.MAX_LEVEL then return tostring(br) end
+    return br .. "-" .. (br + ns.RULES.BRACKET_SIZE - 1)
+end
+Main.BracketLabel = bracketLabel
+
+local function bracketBar(parent, get, set)
+    local bar = {}
+    for i, br in ipairs(BRACKETS) do
+        local b = CreateFrame("Button", nil, parent)
+        b:SetSize(44, 18)
+        b.text = Theme.Text(b, 11)
+        b.text:SetPoint("CENTER")
+        b.text:SetJustifyH("CENTER")
+        b.text:SetText(bracketLabel(br))
+        b.sel = b:CreateTexture(nil, "BACKGROUND")
+        b.sel:SetAllPoints()
+        b.sel:SetColorTexture(Theme.GOLD[1], Theme.GOLD[2], Theme.GOLD[3], 0.25)
+        local hl = b:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetAllPoints()
+        hl:SetColorTexture(1, 1, 1, 0.08)
+        b:SetScript("OnClick", function() set(br); Main.Refresh() end)
+        b:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            GameTooltip:SetText("Level " .. bracketLabel(br) .. " ladder")
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", GameTooltip_Hide)
+        bar[i] = b
+    end
+    function bar.Update()
+        local cur = get()
+        for i, b in ipairs(bar) do
+            local on = cur == BRACKETS[i]
+            b.sel:SetShown(on)
+            if on then b.text:SetTextColor(1, 1, 1) else b.text:SetTextColor(Theme.MUTED[1], Theme.MUTED[2], Theme.MUTED[3]) end
+        end
+    end
+    return bar
+end
+
+---------------------------------------------------------------------------
 -- Profile
 ---------------------------------------------------------------------------
 local profile = {}
@@ -185,6 +231,11 @@ local function buildProfile(page)
     local gtitle = Theme.Text(page, 12, Theme.GOLD)
     gtitle:SetPoint("TOPLEFT", card, "BOTTOMLEFT", 4, -10)
     gtitle:SetText("RATING PROGRESSION")
+    profile.brackets = bracketBar(page, function() return profile.shownBracket end,
+        function(br) profile.bracket = br end)
+    for i, b in ipairs(profile.brackets) do
+        b:SetPoint("TOPRIGHT", card, "BOTTOMRIGHT", -(#BRACKETS - i) * 46, -6)
+    end
     local g = CreateFrame("Frame", nil, page, "BackdropTemplate")
     Theme.Panel(g, true)
     g:SetPoint("TOPLEFT", card, "BOTTOMLEFT", 0, -26)
@@ -228,16 +279,21 @@ end
 
 local function refreshProfile()
     local name = profile.viewing or ns.me.name
-    local p = ns.players[name]
-    if not p then
-        if name == ns.me.name then p = ns.Me() else p = { name = name, r = Elo.START, g = 0, counted = 0, w = 0, l = 0, peak = Elo.START, hist = {}, nOpp = 0 } end
-    end
+    local br = profile.bracket or (name == ns.me.name and ns.MyBracket() or ns.MainBracket(name))
+    profile.shownBracket = br
+    profile.brackets.Update()
+    local p = ns.Player(br, name)
     local class = p.class or (name == ns.me.name and ns.me.class)
+    if not class then
+        for _, players in pairs(ns.byBracket) do
+            if players[name] and players[name].class then class = players[name].class; break end
+        end
+    end
     Theme.SetClassIcon(profile.icon, class)
     profile.name:SetText(name)
     profile.name:SetTextColor(Theme.ClassColor(class))
     local lvl = p.level or (name == ns.me.name and ns.me.level)
-    profile.sub:SetText(string.format("Level %s %s", lvl or "?", classDisplay(class)))
+    profile.sub:SetText(string.format("Level %s %s  ·  %s bracket", lvl or "?", classDisplay(class), bracketLabel(br)))
     local tier = Theme.TierText(p.r, p.counted)
     local ranked = Ledger.IsRanked(p)
     profile.tier:SetText(tier .. (ranked and "" or string.format("  |cff9e9ea8(%d/%d games, %d/%d opponents to rank)|r",
@@ -334,9 +390,15 @@ local function buildBoard(page)
         function(v) board.showAll = v; Main.Refresh() end)
     all:SetPoint("TOPLEFT", x + 6, 0)
 
+    local bl = Theme.Text(page, 11, Theme.GOLD)
+    bl:SetPoint("TOPLEFT", 8, -30)
+    bl:SetText("LEVEL BRACKET")
+    board.brackets = bracketBar(page, function() return board.shownBracket end, function(br) board.bracket = br end)
+    for i, b in ipairs(board.brackets) do b:SetPoint("TOPLEFT", 110 + (i - 1) * 46, -27) end
+
     local header = CreateFrame("Frame", nil, page)
-    header:SetPoint("TOPLEFT", 0, -30)
-    header:SetPoint("TOPRIGHT", 0, -30)
+    header:SetPoint("TOPLEFT", 0, -52)
+    header:SetPoint("TOPRIGHT", 0, -52)
     header:SetHeight(18)
     local cols = { { "#", 8 }, { "PLAYER", 50 }, { "TIER", 300 }, { "RATING", 420 }, { "W - L", 500 }, { "WIN %", 590 } }
     for _, c in ipairs(cols) do
@@ -344,9 +406,9 @@ local function buildBoard(page)
         t:SetPoint("LEFT", c[2], 0)
         t:SetText(c[1])
     end
-    Theme.Divider(page, -50, 0)
+    Theme.Divider(page, -72, 0)
 
-    board.list = makeList(page, 15, 22, function(row)
+    board.list = makeList(page, 14, 22, function(row)
         row.rank = Theme.Text(row, 12, Theme.MUTED); row.rank:SetPoint("LEFT", 8, 0)
         row.icon = row:CreateTexture(nil, "ARTWORK"); row.icon:SetSize(16, 16); row.icon:SetPoint("LEFT", 28, 0)
         row.name = Theme.Text(row, 12); row.name:SetPoint("LEFT", 50, 0); row.name:SetWidth(240)
@@ -384,7 +446,7 @@ local function buildBoard(page)
         row.pct:SetText(winRate(p))
         row.me:SetShown(p.name == ns.me.name)
     end)
-    board.list:SetPoint("TOPLEFT", 0, -54)
+    board.list:SetPoint("TOPLEFT", 0, -76)
     board.list:SetPoint("BOTTOMRIGHT", 0, 22)
 
     board.footer = Theme.Text(page, 11, Theme.MUTED)
@@ -393,8 +455,11 @@ end
 
 local function refreshBoard()
     for _, b in ipairs(board.filters) do b.sel:SetShown(b.class == board.classFilter) end
+    local br = board.bracket or ns.MyBracket()
+    board.shownBracket = br
+    board.brackets.Update()
     local items, verified = {}, 0
-    for _, p in ipairs(ns.board) do
+    for _, p in ipairs(ns.boards[br] or {}) do
         local ok = (board.showAll or Ledger.IsRanked(p))
             and (not board.classFilter or p.class == board.classFilter)
             and (board.search == "" or p.name:lower():find(board.search, 1, true))
@@ -403,9 +468,9 @@ local function refreshBoard()
         verified = verified + p.g
     end
     board.list:SetItems(items)
-    local me = ns.players[ns.me.name]
-    board.footer:SetText(string.format("%d players shown  ·  %d verified matches  ·  Your rank: %s   |cffff9933?|r = no direct confirmation yet",
-        #items, verified / 2, me and me.rank and ("#" .. me.rank) or "unranked"))
+    local me = ns.Player(br, ns.me.name)
+    board.footer:SetText(string.format("%s bracket  ·  %d players  ·  %d verified matches  ·  Your rank: %s   |cffff9933?|r = no direct confirmation yet",
+        bracketLabel(br), #items, verified / 2, me.rank and ("#" .. me.rank) or "unranked"))
 end
 
 ---------------------------------------------------------------------------
@@ -708,7 +773,7 @@ function Main.Toggle(tab)
 end
 
 function Main.ShowProfile(name)
-    profile.viewing = name
+    profile.viewing, profile.bracket = name, nil
     Main.Show("profile")
 end
 
