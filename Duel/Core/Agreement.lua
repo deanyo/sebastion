@@ -142,6 +142,14 @@ function Engine:Lock()
     local ranked = s.myConsent == true and s.theirConsent == true and s.eligible == true
         and s.peer ~= nil
     s.locked = ranked and "R" or "C"
+    if not ranked then
+        -- Why casual, for the screen.
+        if not s.peer then s.lockReason = "no_addon"
+        elseif s.eligible ~= true then s.lockReason = "ineligible"
+        elseif s.myConsent ~= true then s.lockReason = s.myConsent == false and "you" or "you_slow"
+        elseif s.theirConsent == false then s.lockReason = "they"
+        else s.lockReason = "they_slow" end
+    end
     if s.theirNonce then
         self.deps.send(s.opp, table.concat({ "L", s.theirNonce, s.locked }, "~"))
     end
@@ -176,6 +184,12 @@ function Engine:OnMessage(sender, text)
     elseif f[1] == "L" and s.role == "C" and not s.locked then
         local ranked = f[3] == "R" and s.myConsent == true and s.eligible == true
         s.locked = ranked and "R" or "C"
+        if not ranked then
+            if s.eligible ~= true then s.lockReason = "ineligible"
+            elseif s.myConsent ~= true then s.lockReason = s.myConsent == false and "you" or "you_slow"
+            elseif s.theirConsent == false then s.lockReason = "they"
+            else s.lockReason = "they_slow" end
+        end
         self:_changed()
     end
     return true
