@@ -22,6 +22,7 @@ Net\Network.lua
 Game\Evidence.lua
 Game\Controller.lua
 UI\Theme.lua
+UI\Toast.lua
 UI\Main.lua
 UI\Prompt.lua
 UI\Result.lua

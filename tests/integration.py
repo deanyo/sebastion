@@ -254,18 +254,21 @@ def _():
     assert rating(c, "Mallory Evil") is None
 
 
-@test("/duel opens the window; /duel Name challenges via Blizzard")
+@test("/duel (secure StartDuel) reaches our commands; /duel Name still challenges")
 def _():
     w = World()
     a = w.add("Alice Stone", "MAGE")
     g = a.lua.globals()
-    g.SlashCmdList.DUEL("")
+    g.StartDuel("")
     assert a.lua.eval("DuelLadderFrame and DuelLadderFrame:IsShown()")
-    g.SlashCmdList.DUEL("Bob Marsh")
-    assert g.BLIZZARD_DUEL == "Bob Marsh"
-    g.SlashCmdList.DUEL("selftest")
+    g.StartDuel("selftest")
     printed = " ".join(str(p) for p in g.PRINTED.values())
     assert "all" in printed and "checks passed" in printed, printed
+    assert a.lua.eval("ADDON_NS.tracker.state") == "idle"
+    g.StartDuel("Bob Marsh")
+    assert a.lua.eval("ADDON_NS.tracker.state") == "requested"
+    g.SlashCmdList.DUELLADDER("status")
+    assert "verified" in " ".join(str(p) for p in g.PRINTED.values())
 
 
 @test("repeat duels vs the same mate shrink and stop")

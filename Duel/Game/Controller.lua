@@ -26,6 +26,11 @@ function ns.Debug(fmt, ...)
     DEFAULT_CHAT_FRAME:AddMessage("|cff888888[Duel] " .. (ok and msg or fmt) .. "|r")
 end
 
+-- On-screen toast (UI/Toast.lua loads later; safe before it exists).
+function ns.Toast_(title, text, kind)
+    if ns.Toast then pcall(ns.Toast.Show, title, text, kind) end
+end
+
 local listeners = {}
 function ns.Listen(fn) listeners[#listeners + 1] = fn end
 function ns.Fire(event, ...)
@@ -157,6 +162,7 @@ function ns.NoteVersion(v)
     if cmpVersion(v, ns.VERSION) > 0 then
         versionTold = true
         ns.Print("A newer version (%s) is in use. Please update to keep ranked duels working.", v)
+        ns.Toast_("Update available", "Duel Ladder " .. v .. " is in use. Update to keep ranked working.", "warn")
     end
 end
 
@@ -188,6 +194,13 @@ local function onRequest(opp, role)
     local unit = ns.FindUnit(opp)
     if unit then current.class = select(2, UnitClass(unit)) end
     ns.agreement:Begin(opp, role)
+    -- Tell the player on screen whether ranked is even possible.
+    C_Timer.After(4, function()
+        local s = ns.agreement:Session()
+        if s and s.opp == opp and not s.peer then
+            ns.Toast_("Casual duel", opp .. " doesn't have Duel Ladder, so this duel can't be ranked.", "warn")
+        end
+    end)
 end
 
 local function onCountdown(opp)
@@ -202,6 +215,7 @@ local function onCancel(opp, reason, state)
     ns.agreement:Cancel()
     if state ~= "requested" then
         ns.Notify("Duel with %s ended without a result (%s). Nothing recorded.", tostring(opp), reason)
+        ns.Toast_("Duel cancelled", "No result against " .. tostring(opp) .. " (" .. reason .. "). Nothing recorded.", "info")
         ns.Fire("CANCELLED", opp, reason)
     end
     current = {}
@@ -254,6 +268,7 @@ local function onResult(res)
             local r = ns.ledger:Get(id)
             if r and Ledger.Status(r) == "pending" then
                 ns.Notify("Ranked result vs %s is still unconfirmed by them. It will count once they confirm.", res.opp)
+                ns.Toast_("Result unconfirmed", res.opp .. " hasn't confirmed yet. It will count once they do.", "warn")
                 ns.Fire("STATUS", id, "pending")
             end
         end)
@@ -298,10 +313,13 @@ local function onIngest(result, rec, sender)
                 end
                 ns.Notify("Ranked result vs %s confirmed. Rating %d (%s%d).", mine == "a" and r.b or r.a,
                     ns.Me().r, delta >= 0 and "+" or "", delta)
+                ns.Toast_("Ranked result confirmed", string.format("Rating %d (%s%d) vs %s", ns.Me().r,
+                    delta >= 0 and "+" or "", delta, mine == "a" and r.b or r.a), "success")
             end
         end)
     elseif mine and status == "disputed" then
         ns.Fire("STATUS", r.id, "disputed")
+        ns.Toast_("Result disputed", "The other player reported a different result. It won't count.", "error")
     elseif not mine and Ledger.SideOf(r, sender) == nil then
         -- Second-hand: ask the participants when we can.
         ns.Network.QueueConfirmations(r)
@@ -348,7 +366,10 @@ function events.ADDON_LOADED(name)
     local db, dropped = DB.Load(DuelDB, serverNow())
     DuelDB = db
     ns.db = db
-    if dropped > 0 then ns.Print("Dropped %d invalid saved entries.", dropped) end
+    if dropped > 0 then
+        ns.Print("Dropped %d invalid saved entries.", dropped)
+        C_Timer.After(8, function() ns.Toast_("Saved data repaired", dropped .. " invalid entries were dropped.", "warn") end)
+    end
 end
 
 function events.PLAYER_LOGIN()
@@ -404,6 +425,10 @@ function events.PLAYER_LOGIN()
     ns.Directory.Start()
     derive()
     ns.Fire("READY")
+    C_Timer.After(6, function()
+        local p = ns.Me()
+        ns.Toast_("Duel Ladder ready", string.format("Rating %d  ·  type /ladder to open", p.r), "info")
+    end)
 end
 
 function events.PLAYER_LEVEL_UP(level)
@@ -436,6 +461,8 @@ frame:SetScript("OnEvent", function(_, event, ...) events[event](...) end)
 if StartDuel then
     hooksecurefunc("StartDuel", function(arg)
         if not ns.tracker then return end
+        -- "/duel selftest", bare "/duel": our commands, not a challenge.
+        if ns.Commands and ns.Commands.Intercept(arg) then return end
         local name
         if type(arg) == "string" and readable(arg) and arg ~= "" then
             name = UnitExists(arg) and ns.UnitCanon(arg) or Util.CanonName(arg)

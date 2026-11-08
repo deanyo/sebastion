@@ -1,7 +1,6 @@
--- Commands.lua: /duel (and /ladder) commands, debug and test tools.
+-- Commands.lua: /ladder (and /duel <sub-command>) commands, debug and test tools.
 --
--- /duel on its own opens the window. Blizzard's own "/duel Name" (challenge a
--- player) still works: anything that is not one of our sub-commands is passed on.
+-- /ladder is ours. /duel belongs to Blizzard; see Cmd.Intercept for how it reaches us.
 local _, ns = ...
 local Util, Ledger = ns.Util, ns.Ledger
 
@@ -9,7 +8,7 @@ local Cmd = {}
 ns.Commands = Cmd
 
 local HELP = {
-    "|cffe6b422/duel|r - open the ladder window   |cffe6b422/duel lb|r - leaderboard   |cffe6b422/duel history|r",
+    "|cffe6b422/ladder|r (or /duel with nothing targeted) - open the ladder window   |cffe6b422/duel lb|r - leaderboard   |cffe6b422/duel history|r",
     "|cffe6b422/duel profile Name Surname|r - a player's profile   |cffe6b422/duel settings|r",
     "|cffe6b422/duel challenge|r - challenge your target   |cffe6b422/duel Name Surname|r - challenge by name (Blizzard)",
     "|cffe6b422/duel status|r - network status   |cffe6b422/duel sync|r - announce and sync now",
@@ -117,6 +116,21 @@ local function testPrompt()
         eligible = true, myConsent = nil, theirConsent = true })
 end
 
+-- Run fn, collecting what it prints, and show it in the copyable report window.
+local function report(title, fn)
+    local lines, orig = {}, ns.Print
+    ns.Print = function(fmt, ...)
+        local ok, msg = pcall(string.format, fmt, ...)
+        lines[#lines + 1] = select("#", ...) > 0 and (ok and msg or fmt) or fmt
+        orig(fmt, ...)
+    end
+    local ok, err = pcall(fn)
+    ns.Print = orig
+    if not ok then lines[#lines + 1] = "ERROR: " .. tostring(err) end
+    ns.Toast.Report(title, lines)
+    return lines
+end
+
 local SUB = {
     [""] = function() ns.Main.Toggle() end,
     show = function() ns.Main.Toggle() end,
@@ -130,15 +144,23 @@ local SUB = {
         ns.Main.ShowProfile(name)
     end,
     challenge = function() if UnitExists("target") then StartDuel("target") end end,
-    status = status,
-    sync = function() ns.Network.Announce(); ns.Print("Announced; peers will sync.") end,
-    probe = probe,
-    selftest = selftest,
-    pairs = pairsReport,
-    help = function() for _, l in ipairs(HELP) do ns.Print(l) end end,
+    status = function() report("Duel Ladder - status", status) end,
+    sync = function()
+        ns.Network.Announce()
+        ns.Toast.Show("Syncing", "Asked guild, group and known peers to compare ladders.", "info")
+    end,
+    probe = function() report("Duel Ladder - client probe", function() probe(); status() end) end,
+    selftest = function()
+        local lines = report("Duel Ladder - self-test", selftest)
+        local passed = lines[#lines] and lines[#lines]:find("all %d+ checks passed")
+        ns.Toast.Show(passed and "Self-test passed" or "Self-test FAILED", lines[#lines], passed and "success" or "error")
+    end,
+    pairs = function() report("Duel Ladder - most one-sided pairs", pairsReport) end,
+    help = function() ns.Toast.Report("Duel Ladder - commands", HELP) end,
     debug = function()
         ns.db.settings.debug = not ns.db.settings.debug
-        ns.Print("Debug %s.", ns.db.settings.debug and "on" or "off")
+        ns.Toast.Show("Debug " .. (ns.db.settings.debug and "on" or "off"), "Network messages will " ..
+            (ns.db.settings.debug and "" or "not ") .. "be printed in chat.", "info")
     end,
     minimap = function()
         ns.db.settings.minimap = not ns.db.settings.minimap
@@ -167,17 +189,23 @@ SlashCmdList.DUELLADDER = function(msg)
     if not Cmd.Run(msg) then for _, l in ipairs(HELP) do ns.Print(l) end end
 end
 
--- Wrap Blizzard's /duel: our sub-commands and the bare command open the ladder;
--- "/duel Some Name" still challenges that player.
-local blizzardDuel = SlashCmdList.DUEL
-if blizzardDuel then
-    SlashCmdList.DUEL = function(msg)
-        if Cmd.Run(msg) then return end
-        return blizzardDuel(msg)
+-- /duel is a secure Blizzard command (it calls StartDuel(msg)) that addons cannot
+-- replace. We only see it through our StartDuel hook (Controller.lua): a bare
+-- "/duel" with no player targeted, or "/duel <one of our sub-commands>", runs ours.
+function Cmd.Intercept(arg)
+    if type(arg) ~= "string" or not ns.Transport.Readable(arg) then return false end
+    local msg = Util.Trim(arg)
+    if msg == "" then
+        if UnitExists("target") and UnitIsPlayer("target") then return false end
+        ns.Main.Toggle()
+        return true
     end
-    if hash_SlashCmdList then hash_SlashCmdList["/DUEL"] = nil end
-else
-    SLASH_DUELLADDER3 = "/duel"
+    local cmd = msg:match("^(%S+)")
+    if cmd and SUB[cmd:lower()] then
+        Cmd.Run(msg)
+        return true
+    end
+    return false
 end
 
 return Cmd

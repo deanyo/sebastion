@@ -149,7 +149,12 @@ end
 ---------------------------------------------------------------------------
 -- Receiving
 ---------------------------------------------------------------------------
+local announcedPeers = 0
 local function onMessage(text, channel, sender, bnetId)
+    if not N.routes[sender] and announcedPeers < 1 then
+        announcedPeers = announcedPeers + 1
+        ns.Toast_("Ladder network connected", "Syncing results with " .. sender .. " and others.", "success")
+    end
     noteRoute(sender, channel, bnetId)
     local kind = text:match("^(%u+)")
     if not kind then return end
