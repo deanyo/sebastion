@@ -1,0 +1,63 @@
+local ns = load_ns()
+local Elo = ns.Elo
+
+test("expected score is 0.5 for equal ratings", function()
+    eq(Elo.Expected(1500, 1500), 0.5)
+end)
+
+test("provisional K = 40: equal players move 20", function()
+    eq(Elo.Delta(1500, 0, 1500, 1), 20)
+    eq(Elo.Delta(1500, 0, 1500, 0), -20)
+end)
+
+test("established K = 24 and 16 above 2000", function()
+    eq(Elo.Delta(1500, 10, 1500, 1), 12)
+    eq(Elo.Delta(2100, 50, 2100, 1), 8)
+end)
+
+test("beating a stronger player gains more than beating a weaker one", function()
+    local up = Elo.Delta(1500, 20, 1700, 1)
+    local down = Elo.Delta(1500, 20, 1300, 1)
+    ok(up > down, "up " .. up .. " down " .. down)
+    eq(up, 18)
+    eq(down, 6)
+end)
+
+test("weight scales and zero weight freezes", function()
+    eq(Elo.Delta(1500, 10, 1500, 1, 0.5), 6)
+    eq(Elo.Delta(1500, 10, 1500, 1, 0), 0)
+end)
+
+test("rating floor", function()
+    eq(Elo.Delta(105, 50, 105, 0), -5)
+    eq(Elo.Delta(110, 50, 1500, 0), 0)
+end)
+
+test("tiers", function()
+    eq(Elo.Tier(1500, 3).name, "Provisional")
+    eq(Elo.Tier(1500, 10).name, "Silver")
+    eq(Elo.Tier(1399, 10).name, "Bronze")
+    eq(Elo.Tier(1550, 10).name, "Gold")
+    eq(Elo.Tier(2000, 10).name, "Grandmaster")
+end)
+
+test("rounding is symmetric", function()
+    eq(ns.Util.Round(2.5), 3)
+    eq(ns.Util.Round(-2.5), -3)
+    eq(ns.Util.Round(-2.4), -2)
+end)
+
+test("winner message parsing handles 'First Last' names and arg order", function()
+    local U = ns.Util
+    local ko = U.CompileFormat("%1$s has defeated %2$s in a duel")
+    local w, l = U.MatchFormat(ko, "Alice Stone has defeated Bob Marsh in a duel")
+    eq(w, "Alice Stone"); eq(l, "Bob Marsh")
+    local fled = U.CompileFormat("%2$s has fled from %1$s in a duel")
+    w, l = U.MatchFormat(fled, "Bob Marsh has fled from Alice Stone in a duel")
+    eq(w, "Alice Stone"); eq(l, "Bob Marsh")
+    eq(U.MatchFormat(ko, "something else"), nil)
+    local cd = U.CountdownPattern("Duel starting: %d")
+    eq(("Duel starting: 3"):match(cd), "3")
+    eq(U.CanonName("Alice Stone-Realm"), "Alice Stone")
+    eq(U.CanonName("  Alice   Stone "), "Alice Stone")
+end)
